@@ -1,32 +1,48 @@
 import streamlit as st
-import requests
-import os
-from dotenv import load_dotenv
+from llama_index import VectorStoreIndex, SimpleDirectoryReader, ServiceContext, Document
+from llama_index.llms import OpenAI
+import openai
 
-# Load environment variables
-load_dotenv()
+# Load OpenAI API key
+openai.api_key = st.secrets["openai_key"]
 
-# API Configuration
-API_URL = "https://chatgpt.com/api/your-model-endpoint"  # Replace with your model's API endpoint
-API_KEY = os.getenv("API_KEY")  # Store the API key securely
+# App title
+st.title("Pellet Mill Chatbot")
 
-def get_bot_response(prompt):
-    """Send a prompt to the GPT API and get a response."""
-    headers = {"Authorization": f"Bearer {API_KEY}"}
-    payload = {"prompt": prompt}
-    response = requests.post(API_URL, json=payload, headers=headers)
-    return response.json().get("response", "Error: No response from the model.")
+# Initialize message history
+if "messages" not in st.session_state:
+    st.session_state["messages"] = [
+        {"role": "assistant", "content": "Ask me anything about the Pellet Mill manual!"}
+    ]
 
-# Streamlit UI
-st.title("Meelko Pellet Chatbot")
-st.write("Interact with the Meelko Pellet Assistant!")
+# Load and index the data
+@st.cache_resource(show_spinner=True)
+def load_data():
+    reader = SimpleDirectoryReader(input_dir="./data", recursive=True)
+    docs = reader.load_data()
+    service_context = ServiceContext.from_defaults(
+        llm=OpenAI(model="gpt-3.5-turbo", temperature=0.5)
+    )
+    index = VectorStoreIndex.from_documents(docs, service_context=service_context)
+    return index
 
-user_input = st.text_input("Ask a question:")
-if st.button("Submit"):
-    if user_input.strip():
+index = load_data()
+chat_engine = index.as_chat_engine(chat_mode="condense_question", verbose=True)
+
+# Chat UI
+for message in st.session_state["messages"]:
+    with st.chat_message(message["role"]):
+        st.write(message["content"])
+
+# User input
+if user_input := st.chat_input("Type your question here:"):
+    st.session_state["messages"].append({"role": "user", "content": user_input})
+    with st.chat_message("user"):
+        st.write(user_input)
+
+    # Generate response
+    with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
-            bot_response = get_bot_response(user_input)
-        st.success("Bot Response:")
-        st.write(bot_response)
-    else:
-        st.warning("Please enter a question.")
+            response = chat_engine.chat(user_input)
+            st.write(response.response)
+            st.session_state["messages"].append({"role": "assistant", "content": response.response})
