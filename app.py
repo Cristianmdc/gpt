@@ -1,25 +1,32 @@
 import streamlit as st
 import requests
+import os
+from dotenv import load_dotenv
 
-# Streamlit app title
-st.title("Meelko Pellet Assistant Chatbot")
+# Load environment variables
+load_dotenv()
 
-# Input text box for user
-user_input = st.text_input("Ask your question:")
+# API Configuration
+API_URL = "https://chatgpt.com/api/your-model-endpoint"  # Replace with your model's API endpoint
+API_KEY = os.getenv("API_KEY")  # Store the API key securely
 
-# Function to send request to the GPT chatbot API
-def get_bot_response(user_query):
-    # Replace the following URL with your bot's API endpoint if available
-    api_url = "https://chatgpt.com/api/your-bot-endpoint"
-    payload = {"input": user_query}
-    headers = {"Authorization": "Bearer YOUR_API_KEY"}  # Replace with your actual API key
-    response = requests.post(api_url, json=payload, headers=headers)
-    if response.status_code == 200:
-        return response.json().get("response", "No response received.")
+def get_bot_response(prompt):
+    """Send a prompt to the GPT API and get a response."""
+    headers = {"Authorization": f"Bearer {API_KEY}"}
+    payload = {"prompt": prompt}
+    response = requests.post(API_URL, json=payload, headers=headers)
+    return response.json().get("response", "Error: No response from the model.")
+
+# Streamlit UI
+st.title("Meelko Pellet Chatbot")
+st.write("Interact with the Meelko Pellet Assistant!")
+
+user_input = st.text_input("Ask a question:")
+if st.button("Submit"):
+    if user_input.strip():
+        with st.spinner("Thinking..."):
+            bot_response = get_bot_response(user_input)
+        st.success("Bot Response:")
+        st.write(bot_response)
     else:
-        return f"Error: {response.status_code}, {response.text}"
-
-# Display response
-if user_input:
-    response = get_bot_response(user_input)
-    st.write(f"Bot: {response}")
+        st.warning("Please enter a question.")
