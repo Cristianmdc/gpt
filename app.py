@@ -1,48 +1,53 @@
 import streamlit as st
-from llama_index import VectorStoreIndex, SimpleDirectoryReader, ServiceContext, Document
-from llama_index.llms import OpenAI
+from PyPDF2 import PdfReader
 import openai
+import os
+
+# Title of the application
+st.title("LLM Chat App Using PDF Data")
 
 # Load OpenAI API key
-openai.api_key = st.secrets["openai_key"]
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-# App title
-st.title("Pellet Mill Chatbot")
+# Function to extract text from uploaded PDF
+def extract_text_from_pdf(pdf_file):
+    reader = PdfReader(pdf_file)
+    text = ""
+    for page in reader.pages:
+        text += page.extract_text()
+    return text
 
-# Initialize message history
+# Initialize chat history in session state
 if "messages" not in st.session_state:
-    st.session_state["messages"] = [
-        {"role": "assistant", "content": "Ask me anything about the Pellet Mill manual!"}
-    ]
+    st.session_state["messages"] = []
 
-# Load and index the data
-@st.cache_resource(show_spinner=True)
-def load_data():
-    reader = SimpleDirectoryReader(input_dir="./data", recursive=True)
-    docs = reader.load_data()
-    service_context = ServiceContext.from_defaults(
-        llm=OpenAI(model="gpt-3.5-turbo", temperature=0.5)
-    )
-    index = VectorStoreIndex.from_documents(docs, service_context=service_context)
-    return index
+# File uploader
+uploaded_file = st.file_uploader("Upload a PDF file", type=["pdf"])
 
-index = load_data()
-chat_engine = index.as_chat_engine(chat_mode="condense_question", verbose=True)
+if uploaded_file:
+    pdf_text = extract_text_from_pdf(uploaded_file)
+    st.success("PDF uploaded and content extracted!")
 
-# Chat UI
-for message in st.session_state["messages"]:
-    with st.chat_message(message["role"]):
-        st.write(message["content"])
+    # Display chat messages from history
+    for message in st.session_state["messages"]:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-# User input
-if user_input := st.chat_input("Type your question here:"):
-    st.session_state["messages"].append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
-        st.write(user_input)
+    # Accept user input
+    if user_input := st.chat_input("Ask a question based on the PDF content:"):
+        with st.chat_message("user"):
+            st.markdown(user_input)
+        st.session_state["messages"].append({"role": "user", "content": user_input})
 
-    # Generate response
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            response = chat_engine.chat(user_input)
-            st.write(response.response)
-            st.session_state["messages"].append({"role": "assistant", "content": response.response})
+        # Generate response using OpenAI
+        with st.chat_message("assistant"):
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant. Use the following PDF content to answer the user's questions: " + pdf_text},
+                    *st.session_state["messages"]
+                ]
+            )
+            reply = response["choices"][0]["message"]["content"]
+            st.markdown(reply)
+            st.session_state["messages"].append({"role": "assistant", "content": reply})
