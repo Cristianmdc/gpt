@@ -1,36 +1,47 @@
 import streamlit as st
 import requests
 
-# Set the base URL for your custom GPT assistant API
-BASE_URL = "https://chatgpt.com/g/g-MY83uKdFK-meelko-pellet-assistant/api"  # Replace with actual API endpoint if available
+# Streamlit page configuration
+st.set_page_config(page_title="GPT Chatbot", page_icon="🤖", layout="wide")
 
-# Title and description
-st.title("Meelko Pellet Assistant")
-st.subheader("Ask anything about Meelko Pellet!")
+# Chatbot interface
+st.title("Chat with Your Custom GPT")
+
+# Define API details
+API_URL = "https://chatgpt.com/g/g-MY83uKdFK-meelko-pellet-assistant"  # Replace with your GPT API endpoint
+API_KEY = "your_api_key_here"  # Add your API key if required
+
+# Initialize chat history
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
 # User input
-query = st.text_area("Enter your question:")
+with st.form(key="chat_form"):
+    user_message = st.text_input("You:", placeholder="Type your question here...", key="user_input")
+    submit = st.form_submit_button("Send")
 
-if st.button("Submit"):
-    if query.strip():
-        # Call the GPT API
-        try:
-            response = requests.post(
-                f"{BASE_URL}",
-                json={"input": query},  # Adjust payload if necessary
-                headers={"Authorization": "Bearer YOUR_API_KEY"}  # Replace with your key if needed
-            )
-            if response.status_code == 200:
-                result = response.json()
-                answer = result.get("response", "No response received.")
-                st.success("### Meelko Assistant's Response:")
-                st.write(answer)
-            else:
-                st.error(f"API returned an error: {response.status_code}")
-        except Exception as e:
-            st.error(f"An error occurred: {str(e)}")
+# Handle user input
+if submit and user_message:
+    # Add user message to session state
+    st.session_state.messages.append({"role": "user", "content": user_message})
+
+    # Call GPT API
+    response = requests.post(
+        API_URL,
+        json={"messages": st.session_state.messages},
+        headers={"Authorization": f"Bearer {API_KEY}"} if API_KEY else {}
+    )
+
+    if response.status_code == 200:
+        # Get GPT response
+        bot_reply = response.json().get("choices", [])[0].get("message", {}).get("content", "")
+        st.session_state.messages.append({"role": "assistant", "content": bot_reply})
     else:
-        st.warning("Please enter a question to submit.")
+        bot_reply = "Error: Unable to fetch response from the GPT."
 
-# Footer or additional information
-st.caption("Powered by Meelko Pellet Assistant")
+# Display chat history
+for message in st.session_state.messages:
+    if message["role"] == "user":
+        st.write(f"**You:** {message['content']}")
+    else:
+        st.write(f"**Assistant:** {message['content']}")
