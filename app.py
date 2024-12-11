@@ -1,62 +1,83 @@
 import streamlit as st
-from PyPDF2 import PdfReader
-import openai
+import pandas as pd
+import numpy as np
+import json
+import base64
+import ast
+from openai import OpenAI
+from tenacity import retry, wait_random_exponential, stop_after_attempt
+from typing import List
 
-# Title of the application
-st.title("LLM Chat App Using PDF Data")
+# Initialize OpenAI client
+client = OpenAI()
 
-# Load OpenAI API key
-openai.api_key = st.secrets["OPENAI_API_KEY"]
+GPT_MODEL = "gpt-4o-mini"
+EMBEDDING_MODEL = "text-embedding-3-large"
 
-# Function to extract text from uploaded PDF
-def extract_text_from_pdf(pdf_file):
-    try:
-        reader = PdfReader(pdf_file)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text() or ""  # Ensure no NoneType error
-        return text
-    except Exception as e:
-        st.error(f"Error reading PDF: {e}")
-        return ""
+# Functions for Embedding and Cosine Similarity
+@retry(wait=wait_random_exponential(min=1, max=40), stop=stop_after_attempt(10))
+def get_embeddings(input: List):
+    response = client.embeddings.create(
+        input=input,
+        model=EMBEDDING_MODEL
+    ).data
+    return [data.embedding for data in response]
 
-# Initialize chat history in session state
-if "messages" not in st.session_state:
-    st.session_state["messages"] = []
+def cosine_similarity_manual(vec1, vec2):
+    vec1, vec2 = np.array(vec1, dtype=float), np.array(vec2, dtype=float)
+    return np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
 
-# File uploader
-uploaded_file = st.file_uploader("Upload a PDF file", type=["pdf"])
+# App layout and setup
+st.title("Clothing Matchmaker App")
+st.write("Upload an image of a clothing item to find complementary matches!")
+
+uploaded_file = st.file_uploader("Choose a clothing image...", type=["jpg", "png", "jpeg"])
 
 if uploaded_file:
-    pdf_text = extract_text_from_pdf(uploaded_file)
-    if pdf_text:
-        st.success("PDF uploaded and content extracted!")
+    def encode_image_to_base64(image):
+        return base64.b64encode(image.read()).decode('utf-8')
 
-        # Display chat messages from history
-        for message in st.session_state["messages"]:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
+    encoded_image = encode_image_to_base64(uploaded_file)
+    st.image(uploaded_file, caption='Uploaded Image', use_column_width=True)
+    
+    subcategories = ["Shirts", "Pants", "Jackets", "Dresses", "T-shirts", "Shoes", "Accessories"]
 
-        # Accept user input
-        if user_input := st.chat_input("Ask a question based on the PDF content:"):
-            with st.chat_message("user"):
-                st.markdown(user_input)
-            st.session_state["messages"].append({"role": "user", "content": user_input})
+    def analyze_image(image_base64, subcategories):
+        response = client.chat.completions.create(
+            model=GPT_MODEL,
+            messages=[
+                {"role": "user", "content": f"Analyze this image and classify using {subcategories}"}
+            ],
+        )
+        return json.loads(response.choices[0].message.content)
 
-            # Generate response using OpenAI
-            with st.chat_message("assistant"):
-                try:
-                    response = openai.ChatCompletion.create(
-                        model="gpt-3.5-turbo",
-                        messages=[
-                            {"role": "system", "content": "You are a helpful assistant. Use the following PDF content to answer the user's questions: " + pdf_text},
-                            *st.session_state["messages"]
-                        ]
-                    )
-                    reply = response["choices"][0]["message"]["content"]
-                    st.markdown(reply)
-                    st.session_state["messages"].append({"role": "assistant", "content": reply})
-                except Exception as e:
-                    st.error(f"Error generating response: {e}")
-    else:
-        st.error("Failed to extract text from the uploaded PDF. Please try another file.")
+    # Process image and display results
+    analysis = analyze_image(encoded_image, subcategories)
+    st.write("Analysis Results:", analysis)
+
+    # Fetch dataset and filter matches
+    @st.cache
+    def load_dataset():
+        df = pd.read_csv('sample_styles_with_embeddings.csv')
+        df['embeddings'] = df['embeddings'].apply(lambda x: ast.literal_eval(x))
+        return df
+    
+    styles_df = load_dataset()
+    item_descs, item_category, item_gender = analysis['items'], analysis['category'], analysis['gender']
+    filtered_items = styles_df[styles_df['gender'].isin([item_gender, 'Unisex'])]
+    filtered_items = filtered_items[filtered_items['articleType'] != item_category]
+
+    # Match items
+    def find_similar_items(input_embedding, embeddings, threshold=0.5, top_k=3):
+        similarities = [(i, cosine_similarity_manual(input_embedding, vec)) for i, vec in enumerate(embeddings)]
+        filtered_similarities = [(i, sim) for i, sim in similarities if sim >= threshold]
+        return sorted(filtered_similarities, key=lambda x: x[1], reverse=True)[:top_k]
+
+    for desc in item_descs:
+        input_embedding = get_embeddings([desc])[0]
+        matches = find_similar_items(input_embedding, filtered_items['embeddings'].tolist(), 0.6)
+        st.write(f"Matches for {desc}:")
+        for index, _ in matches:
+            matched_item = filtered_items.iloc[index]
+            st.image(f"sample_images/{matched_item['id']}.jpg")
+
