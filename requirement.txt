@@ -2,5 +2,6 @@ streamlit
 openai
 numpy
 pandas
-tenacity
-tiktoken
+Pillow
+PyMuPDF
+pdfminer.six
