@@ -1,66 +1,50 @@
 import streamlit as st
-import pandas as pd
-import json
-import base64
-from typing import List
+from PyPDF2 import PdfReader
+from openai.embeddings_utils import get_embedding
+import openai
+import os
 import numpy as np
-from PIL import Image
-from openai import OpenAI
+from sklearn.metrics.pairwise import cosine_similarity
 
-# Load your PDF data
-def load_pdf_data(pdf_path):
-    with open(pdf_path, 'rb') as pdf_file:
-        encoded_pdf = base64.b64encode(pdf_file.read())
-        return encoded_pdf.decode('utf-8')
+# Streamlit app title
+st.title("Clothing Matchmaker Chatbot")
 
-# Function to extract data from the PDF
-def extract_pdf_text(base64_pdf):
-    # Placeholder for PDF text extraction logic
-    # Customize based on your needs, using a library like PyMuPDF or pdfminer
-    return "Extracted text from PDF."
+# Load OpenAI API Key
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-# Analyze clothing image
-def analyze_image(image, subcategories):
-    # Placeholder for the GPT-4o-mini analysis logic
-    return {
-        "items": ["Example Item 1", "Example Item 2"],
-        "category": "Example Category",
-        "gender": "Example Gender"
-    }
+# File uploader
+uploaded_file = st.file_uploader("Upload a PDF file", type=["pdf"])
 
-# Matching items logic
-def find_similar_items(input_desc, database):
-    # Placeholder logic for finding similar items
-    return [{"id": 1, "desc": "Similar Item 1"}, {"id": 2, "desc": "Similar Item 2"}]
+if uploaded_file:
+    # Read the PDF
+    reader = PdfReader(uploaded_file)
+    text = ""
+    for page in reader.pages:
+        text += page.extract_text()
 
-# Streamlit App UI
-def main():
-    st.title("Clothing Matchmaker")
-    st.sidebar.title("Options")
+    st.write("PDF content loaded successfully!")
     
-    uploaded_file = st.sidebar.file_uploader("Upload your PDF dataset", type=["pdf"])
-    
-    if uploaded_file:
-        base64_pdf = load_pdf_data(uploaded_file)
-        st.sidebar.write("PDF Uploaded Successfully!")
-        
-        extracted_text = extract_pdf_text(base64_pdf)
-        st.text_area("Extracted Text from PDF", extracted_text, height=300)
-    
-    # Upload an image
-    uploaded_image = st.sidebar.file_uploader("Upload a clothing image", type=["jpg", "png"])
-    if uploaded_image:
-        st.image(uploaded_image, caption="Uploaded Clothing Image", use_column_width=True)
-        # Analyze the image
-        analysis_result = analyze_image(uploaded_image, ["Category 1", "Category 2"])
-        st.json(analysis_result)
-    
-    # Simulate finding similar items
-    if st.button("Find Matches"):
-        matches = find_similar_items("Sample Description", [{"id": 1, "desc": "Item 1"}])
-        st.write("Matching Items:")
-        for match in matches:
-            st.write(f"Item ID: {match['id']}, Description: {match['desc']}")
+    # Process and embed content
+    st.write("Generating embeddings for the document...")
+    doc_embeddings = []
+    chunk_size = 200
+    for i in range(0, len(text), chunk_size):
+        chunk = text[i:i + chunk_size]
+        embedding = get_embedding(chunk, model="text-embedding-ada-002")
+        doc_embeddings.append(embedding)
+    st.write("Embeddings generated.")
 
-if __name__ == "__main__":
-    main()
+    # Chatbot interaction
+    def answer_query(query, doc_embeddings, doc_text):
+        query_embedding = get_embedding(query, model="text-embedding-ada-002")
+        similarities = cosine_similarity([query_embedding], doc_embeddings).flatten()
+        best_idx = np.argmax(similarities)
+        return doc_text[best_idx]
+
+    query = st.text_input("Enter your question about the PDF content:")
+    if query:
+        response = answer_query(query, doc_embeddings, text)
+        st.write(f"Answer: {response}")
+
+else:
+    st.write("Please upload a PDF file to begin.")
